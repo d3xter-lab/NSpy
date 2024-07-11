@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>NSpy</title>
+    <style>
+        body {
+            min-width: 300px;
+            padding: 10px;
+            font-family: 'Roboto', sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #ffffff;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+
+        .icon {
+            width: 36px;
+            height: 36px;
+        }
+
+        .nspy {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #2db400;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 25px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.4s;
+            border-radius: 25px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 21px;
+            width: 21px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: 0.4s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: #2db400;
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(24px);
+        }
+
+        .footer {
+            margin-top: 10px;
+            padding-top: 10px;
+            text-align: center;
+            color: #777;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <img src="images/icon_48.png" alt="App Icon" class="icon">
+        <div class="nspy">NSpy</div>
+        <label class="switch">
+            <input id="enabled" type="checkbox" />
+            <span class="slider"></span>
+        </label>
+    </div>
+    <div class="footer">
+        Powered by d3xter
+    </div>
+    <script src="popup.js"></script>
+</body>
+
+</html>
