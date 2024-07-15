@@ -18,7 +18,8 @@ This program is developed using Manifest V3 (MV3). Unlike MV2, MV3 imposes signi
 
 ## Download
 
-- [Chrome Web Store]()
+- 크롬 웹스토어는 기존 배포된 익스텐션 존재여부와 관계없이 로그인 우회같은 기능은 정책에 위반된다고 업로드가 불가능합니다.
+- 이 레포지토리를 clone하거나 소스코드를 직접 다운로드하고 크롬의 익스텐션 페이지에서 'Developer mode'를 활성화하고 'Load unpacked'으로 로드하셔야합니다.
 
 ## Supported Browsers
 
