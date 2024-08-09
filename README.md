@@ -16,14 +16,26 @@ This program is developed using Manifest V3 (MV3). Unlike MV2, MV3 imposes signi
 
 본 프로그램은 MV3으로 개발되었습니다. MV2와 다르게 HTTP 요청/응답 제어에 제한이 많기 때문에 content 스크립트를 사용하여 응답값을 수정하는 방식을 사용합니다. 따라서 익스텐션 설치 혹은 활성화/비활성화 시에 기능이 정상적으로 동작하지 않는 경우, 새로고침이 필요할 수 있습니다.
 
-## Download
+## Install
 
-- 크롬 웹스토어는 기존 배포된 익스텐션 존재여부와 관계없이 로그인 우회같은 기능은 정책에 위반된다고 업로드가 불가능합니다.
-- 이 레포지토리를 clone하거나 소스코드를 직접 다운로드하고 크롬의 익스텐션 페이지에서 'Developer mode'를 활성화하고 'Load unpacked'으로 로드하셔야합니다.
+* Chrome
+  * 크롬 웹스토어는 기존 배포된 익스텐션 존재여부와 관계없이 로그인 우회같은 기능은 정책에 위반된다고 업로드가 불가능합니다.
+  * src 내 `manifest-chrome.json` 을 `manifest.json` 으로 변경
+  * chrome://extensions/ 로 이동
+  * 개발자 모드(Developer Mode) 활성화
+  * "Load Unpacked" 클릭
+  * manifest.json 혹은 src 경로 선택
+
+* Firefox
+  * src 내 `manifest-firefox.json` 을 `manifest.json` 으로 변경
+  * about:debugging#/runtime/this-firefox 로 이동
+  * "Load Temporary Add-on..." 클릭
+  * manifest.json 선택
 
 ## Supported Browsers
 
-- This extension is developed and tested exclusively on Google Chrome.
+* Chrome
+* Firefox (Thanks to [@HexagonWin](https://github.com/HexagonWin))
 
 ## Open Source
 

@@ -1,0 +1,56 @@
+{
+    "manifest_version": 3,
+    "name": "NSpy",
+    "description": "Allow to bypass Naver Cafe post reading blocking.",
+    "version": "1.0.0",
+    "author": "d3xter",
+    "homepage_url": "https://github.com/d3xter-lab/NSpy",
+    "icons": {
+        "16": "images/icon_16.png",
+        "32": "images/icon_32.png",
+        "48": "images/icon_48.png",
+        "128": "images/icon_128.png"
+    },
+    "permissions": [
+        "storage",
+        "activeTab"
+    ],
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "js": [
+                "scripts/content.js"
+            ],
+            "matches": [
+                "*://cafe.naver.com/*",
+                "*://search.naver.com/*"
+            ]
+        }
+    ],
+    "background": {
+        "scripts": ["scripts/background.js"]
+    },
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "images/icon_16.png",
+                "images/icon_32.png",
+                "images/icon_48.png",
+                "images/icon_128.png",
+                "images/icon_disabled_16.png",
+                "images/icon_disabled_32.png",
+                "images/icon_disabled_48.png",
+                "images/icon_disabled_128.png",
+                "images/icon_running_16.png",
+                "images/icon_running_32.png",
+                "images/icon_running_48.png",
+                "images/icon_running_128.png"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ]
+}
