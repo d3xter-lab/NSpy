@@ -25,7 +25,7 @@
             ],
             "matches": [
                 "*://cafe.naver.com/*",
-                "*://search.naver.com/*"
+                "*://search.naver.com/search.naver?ssc=tab.cafe.all&query=*"
             ]
         }
     ],
