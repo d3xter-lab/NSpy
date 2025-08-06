@@ -36,6 +36,7 @@ This program is developed using Manifest V3 (MV3). Unlike MV2, MV3 imposes signi
 
 * Chrome
 * Firefox (Thanks to [@HexagonWin](https://github.com/HexagonWin))
+* Ultimatum (Android)
 
 ## Open Source
 
