@@ -32,9 +32,14 @@ const updateIconStatus = (status) => {
 };
 
 // Core functions
-const fetchNewUrl = async (articleId, title, cafeName) => {
+const fetchNewUrl = async (isMobile, articleId, title, cafeName) => {
     const encodedTitle = encodeURIComponent(title);
-    const searchUrl = `https://search.naver.com/search.naver?ssc=tab.cafe.all&query="${encodedTitle}"`;
+    let searchUrl;
+    if (isMobile) {
+        searchUrl = `https://m.search.naver.com/search.naver?ssc=tab.cafe.all&query="${encodedTitle}"`;
+    } else {
+        searchUrl = `https://search.naver.com/search.naver?ssc=tab.cafe.all&query="${encodedTitle}"`;
+    }
 
     try {
         const response = await chrome.runtime.sendMessage({
@@ -61,6 +66,62 @@ const fetchNewUrl = async (articleId, title, cafeName) => {
     return null;
 };
 
+const cafeInfoCache = new Map();
+
+const fetchCafeInfoFromUrl = async (cafeUrl) => {
+    if (cafeInfoCache.has(cafeUrl)) {
+        return cafeInfoCache.get(cafeUrl);
+    }
+
+    const apiUrl = `https://apis.naver.com/cafe-web/cafe2/CafeGateInfo.json?cluburl=${cafeUrl}`;
+    try {
+        const response = await fetch(apiUrl, {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const json = await response.json();
+        const cafeInfo = json?.message?.result?.cafeInfoView;
+        if (!cafeInfo?.cafeId) throw new Error('cafeId not found');
+
+        const result = {
+            cafeName: cafeInfo.cafeUrl,
+            cafeIndex: cafeInfo.cafeId.toString()
+        };
+
+        cafeInfoCache.set(cafeUrl, result);
+        return result;
+    } catch (err) {
+        return null;
+    }
+};
+
+const waitForElement = (selector, timeout = 5000) => {
+    return new Promise((resolve, reject) => {
+        const element = document.querySelector(selector);
+        if (element) return resolve(element);
+
+        const observer = new MutationObserver((mutations) => {
+            const el = document.querySelector(selector);
+            if (el) {
+                observer.disconnect();
+                resolve(el);
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        setTimeout(() => {
+            observer.disconnect();
+            reject(new Error('Timeout waiting for element: ' + selector));
+        }, timeout);
+    });
+};
+
 const replaceSpyLinks = async (doc) => {
     if (extensionStatus !== EXTENSION_STATUS.ENABLED) return;
     updateIconStatus(EXTENSION_STATUS.RUNNING);
@@ -69,47 +130,92 @@ const replaceSpyLinks = async (doc) => {
         await new Promise(resolve => doc.addEventListener('DOMContentLoaded', resolve));
     }
 
-    const articleLinks = doc.querySelectorAll('a.article');
-    if (articleLinks.length === 0) {
-        updateIconStatus(EXTENSION_STATUS.ENABLED);
-        return;
-    }
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
 
-    const cafeName = extractCafeName(doc);
+    if (isMobile) {        
+        const pathParts = location.pathname.split('/');
+        const cafeUrl = pathParts[2];
 
-    const promises = Array.from(articleLinks).map(async (link) => {
-        if (processedLinks.has(link.href)) return;
+        const cafeInfo = await fetchCafeInfoFromUrl(cafeUrl);
+        if (cafeInfo) {
+            const { cafeName, cafeIndex } = cafeInfo;
+            try {
+                await waitForElement('a.mainLink');
+            } catch (e) {
+                updateIconStatus(EXTENSION_STATUS.ENABLED);
+                return;
+            }
 
-        processedLinks.add(link.href);
-        const url = new URL(link.href);
-        const pathParts = url.pathname.split('/');
-        let cafeId = null;
-        let articleId = null;
-        
-        const cafeIndex = pathParts.indexOf('cafes');
-        const articleIndex = pathParts.indexOf('articles');
+            const articleLinks = doc.querySelectorAll('a.mainLink');
+            const promises = Array.from(articleLinks).map(async (link) => {
+                const href = link.href;
 
-        if (cafeIndex !== -1 && pathParts.length > cafeIndex + 1) {
-            cafeId = pathParts[cafeIndex + 1];
-        }
-        if (articleIndex !== -1 && pathParts.length > articleIndex + 1) {
-            articleId = pathParts[articleIndex + 1];
-        }
-        const title = extractTitle(link);
+                if (processedLinks.has(href)) return;
+                processedLinks.add(href);
 
-        const art = await fetchNewUrl(articleId, title, cafeName);
-        if (art) {
-            const newUrl = `https://cafe.naver.com/${cafeName}/${articleId}?art=${encodeURIComponent(art)}`;
-            link.href = newUrl;
+                const url = new URL(href);
+                const articleId = url.searchParams.get('articleid');
+                const titleSpan = link.querySelector('span.tit');
+                const title = titleSpan ? titleSpan.textContent.trim() : '';
 
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                window.location.href = newUrl;
+                const art = await fetchNewUrl(isMobile, articleId, title, cafeName);
+                if (art) {
+                    url.searchParams.set('art', art);
+                    const newUrl = url.toString();
+                    link.href = newUrl;
+
+                    link.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        window.location.replace(newUrl);
+                    });
+                }
             });
-        }
-    });
 
-    await Promise.all(promises);
+            await Promise.all(promises);
+        }
+    } else {
+        const articleLinks = doc.querySelectorAll('a.article');
+        if (articleLinks.length === 0) {
+            updateIconStatus(EXTENSION_STATUS.ENABLED);
+            return;
+        }
+
+        const cafeName = extractCafeName(doc);
+
+        const promises = Array.from(articleLinks).map(async (link) => {
+            if (processedLinks.has(link.href)) return;
+
+            processedLinks.add(link.href);
+            const url = new URL(link.href);
+            const pathParts = url.pathname.split('/');
+            let cafeId = null;
+            let articleId = null;
+            
+            const cafeIndex = pathParts.indexOf('cafes');
+            const articleIndex = pathParts.indexOf('articles');
+
+            if (cafeIndex !== -1 && pathParts.length > cafeIndex + 1) {
+                cafeId = pathParts[cafeIndex + 1];
+            }
+            if (articleIndex !== -1 && pathParts.length > articleIndex + 1) {
+                articleId = pathParts[articleIndex + 1];
+            }
+            const title = extractTitle(link);
+
+            const art = await fetchNewUrl(isMobile, articleId, title, cafeName);
+            if (art) {
+                const newUrl = `https://cafe.naver.com/${cafeName}/${articleId}?art=${encodeURIComponent(art)}`;
+                link.href = newUrl;
+
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    window.location.href = newUrl;
+                });
+            }
+        });
+
+        await Promise.all(promises);
+    }
     updateIconStatus(EXTENSION_STATUS.ENABLED);
 };
 

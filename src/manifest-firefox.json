@@ -4,6 +4,7 @@
     "description": "Allow to bypass Naver Cafe post reading blocking.",
     "version": "1.0.0",
     "author": "d3xter",
+    "default_locale": "en",
     "homepage_url": "https://github.com/d3xter-lab/NSpy",
     "icons": {
         "16": "images/icon_16.png",
@@ -25,13 +26,21 @@
             ],
             "matches": [
                 "*://cafe.naver.com/*",
+                "*://m.cafe.naver.com/*",
                 "*://search.naver.com/search.naver?ssc=tab.cafe.all&query=*"
             ]
         }
     ],
     "background": {
-        "scripts": ["scripts/background.js"]
+        "scripts": [
+            "scripts/background.js"
+        ]
     },
+    "host_permissions": [
+        "https://search.naver.com/*",
+        "https://m.search.naver.com/*",
+        "https://apis.naver.com/*"
+    ],
     "web_accessible_resources": [
         {
             "resources": [
