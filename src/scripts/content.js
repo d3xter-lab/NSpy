@@ -8,15 +8,103 @@ const EXTENSION_STATUS = {
 const PC_ARTICLE_LINK_SELECTOR = 'a.article, a.tit, a[href*="/articles/"], a[href*="ArticleRead.nhn"]';
 const MOBILE_ARTICLE_LINK_SELECTOR = 'a.mainLink, a.feedContent, a.fullLink';
 const ART_CACHE_TTL_MS = 10 * 60 * 1000;
+const API_META_EVENT = '__nspy_api_meta__';
 
 // State
 let extensionStatus = EXTENSION_STATUS.DISABLED;
 let activeTasks = 0;
 const artCache = new Map();
 const inFlightRequests = new Map();
+let globalLoggedIn = null;
+const cafeMemberMap = new Map();
+const articleMetaMap = new Map();
+const loggedReadableArticles = new Set();
+const pendingAuthWaiters = [];
 let mainObserver;
 let iframeObservers = [];
 const iframeStateMap = new WeakMap();
+
+const notifyAuthWaiters = () => {
+    const waiters = pendingAuthWaiters.splice(0, pendingAuthWaiters.length);
+    waiters.forEach(fn => fn());
+};
+
+document.addEventListener(API_META_EVENT, (event) => {
+    try {
+        const payload = typeof event.detail === 'string' ? JSON.parse(event.detail) : event.detail;
+        if (!payload) return;
+
+        if (payload.type === 'auth') {
+            globalLoggedIn = payload.loggedIn;
+            notifyAuthWaiters();
+        } else if (payload.type === 'member' && payload.cafeId) {
+            cafeMemberMap.set(String(payload.cafeId), {
+                isMember: Boolean(payload.isMember),
+                level: Number(payload.level) || 0,
+                isStaff: Boolean(payload.isStaff)
+            });
+            notifyAuthWaiters();
+        } else if (payload.type === 'articles' && Array.isArray(payload.articles)) {
+            for (const item of payload.articles) {
+                if (!item?.articleId) continue;
+                if (item.cafeId) {
+                    articleMetaMap.set(`${item.cafeId}:${item.articleId}`, item);
+                }
+                articleMetaMap.set(`any:${item.articleId}`, item);
+            }
+        }
+    } catch {
+        // Ignore malformed event payloads
+    }
+});
+
+const waitForMemberAuthIfNeeded = (cafeId, timeoutMs = 600) => {
+    if (!cafeId || globalLoggedIn === false || cafeMemberMap.has(String(cafeId))) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+        const check = () => {
+            if (globalLoggedIn === false || cafeMemberMap.has(String(cafeId))) {
+                clearTimeout(timer);
+                const idx = pendingAuthWaiters.indexOf(check);
+                if (idx !== -1) pendingAuthWaiters.splice(idx, 1);
+                resolve();
+            }
+        };
+        const timer = setTimeout(() => {
+            const idx = pendingAuthWaiters.indexOf(check);
+            if (idx !== -1) pendingAuthWaiters.splice(idx, 1);
+            resolve();
+        }, timeoutMs);
+        pendingAuthWaiters.push(check);
+    });
+};
+
+const isArticleAlreadyReadable = (cafeId, articleId, group) => {
+    for (const { link } of group.items) {
+        if (link.matches('a.txt, a.link_contents') && link.textContent.trim().length > 0) {
+            return true;
+        }
+    }
+
+    const meta = (cafeId && articleMetaMap.get(`${cafeId}:${articleId}`)) ||
+        articleMetaMap.get(`any:${articleId}`);
+    if (!meta) return false;
+
+    if (meta.openArticle || meta.self || meta.hasSummary || meta.readLevel === 0) {
+        return true;
+    }
+
+    const member = cafeId ? cafeMemberMap.get(String(cafeId)) : null;
+    if (!member) return false;
+
+    if (member.isStaff) return true;
+    if (member.isMember && typeof meta.readLevel === 'number' && member.level >= meta.readLevel) {
+        return true;
+    }
+
+    return false;
+};
 
 // Utility functions
 const debounce = (func, wait) => {
@@ -273,12 +361,14 @@ const replaceSpyLinks = async (doc) => {
         const cafeInfo = await fetchCafeInfo(cafeIdentifier);
         if (!cafeInfo) return;
 
-        const { cafeName } = cafeInfo;
+        const { cafeName, cafeIndex } = cafeInfo;
         try {
             await waitForElement(doc, MOBILE_ARTICLE_LINK_SELECTOR);
         } catch (e) {
             return;
         }
+
+        await waitForMemberAuthIfNeeded(cafeIndex);
 
         const articleLinks = doc.querySelectorAll(MOBILE_ARTICLE_LINK_SELECTOR);
         const articleGroups = new Map();
@@ -307,11 +397,35 @@ const replaceSpyLinks = async (doc) => {
 
         if (articleGroups.size === 0) return;
 
-        const needsNetwork = Array.from(articleGroups.entries()).some(([id, group]) => {
+        const allEntries = Array.from(articleGroups.entries());
+        const targetEntries = [];
+        let newlySkipped = 0;
+        for (const entry of allEntries) {
+            const [id, group] = entry;
+            if (isArticleAlreadyReadable(cafeIndex, id, group)) {
+                const key = `${cafeName}:${id}`;
+                if (!loggedReadableArticles.has(key)) {
+                    loggedReadableArticles.add(key);
+                    newlySkipped++;
+                }
+            } else {
+                targetEntries.push(entry);
+            }
+        }
+
+        const uncachedCount = targetEntries.filter(([id, group]) => {
             if (!group.title) return false;
             const cached = artCache.get(`${cafeName}:${id}`);
             return !cached || Date.now() - cached.ts >= ART_CACHE_TTL_MS;
-        });
+        }).length;
+
+        if (newlySkipped > 0 || uncachedCount > 0) {
+            console.debug(`[NSpy] evaluated=${allEntries.length}, skippedReadable=${allEntries.length - targetEntries.length}, searchRequests=${uncachedCount}`);
+        }
+
+        if (targetEntries.length === 0) return;
+
+        const needsNetwork = uncachedCount > 0;
 
         if (needsNetwork) {
             activeTasks++;
@@ -319,7 +433,7 @@ const replaceSpyLinks = async (doc) => {
         }
 
         try {
-            const promises = Array.from(articleGroups.entries()).map(async ([articleId, group]) => {
+            const promises = targetEntries.map(async ([articleId, group]) => {
                 const cached = artCache.get(`${cafeName}:${articleId}`);
                 const hasFreshCache = cached && Date.now() - cached.ts < ART_CACHE_TTL_MS;
                 if (!hasFreshCache && !group.title) return;
@@ -391,12 +505,37 @@ const replaceSpyLinks = async (doc) => {
         }
         if (!cafeName) return;
 
-        const entries = Array.from(articleGroups.entries());
-        const needsNetwork = entries.some(([id, group]) => {
+        await waitForMemberAuthIfNeeded(fallbackCafeId);
+
+        const allEntries = Array.from(articleGroups.entries());
+        const targetEntries = [];
+        let newlySkipped = 0;
+        for (const entry of allEntries) {
+            const [id, group] = entry;
+            if (isArticleAlreadyReadable(fallbackCafeId, id, group)) {
+                const key = `${cafeName}:${id}`;
+                if (!loggedReadableArticles.has(key)) {
+                    loggedReadableArticles.add(key);
+                    newlySkipped++;
+                }
+            } else {
+                targetEntries.push(entry);
+            }
+        }
+
+        const uncachedCount = targetEntries.filter(([id, group]) => {
             if (!group.title) return false;
             const cached = artCache.get(`${cafeName}:${id}`);
             return !cached || Date.now() - cached.ts >= ART_CACHE_TTL_MS;
-        });
+        }).length;
+
+        if (newlySkipped > 0 || uncachedCount > 0) {
+            console.debug(`[NSpy] evaluated=${allEntries.length}, skippedReadable=${allEntries.length - targetEntries.length}, searchRequests=${uncachedCount}`);
+        }
+
+        if (targetEntries.length === 0) return;
+
+        const needsNetwork = uncachedCount > 0;
 
         if (needsNetwork) {
             activeTasks++;
@@ -404,7 +543,7 @@ const replaceSpyLinks = async (doc) => {
         }
 
         try {
-            const promises = entries.map(async ([articleId, group]) => {
+            const promises = targetEntries.map(async ([articleId, group]) => {
                 const cached = artCache.get(`${cafeName}:${articleId}`);
                 const hasFreshCache = cached && Date.now() - cached.ts < ART_CACHE_TTL_MS;
                 if (!hasFreshCache && !group.title) return;
@@ -463,6 +602,10 @@ const hasMatchingLinks = (node, selector) => {
 const initContentScript = () => {
     if (extensionStatus === EXTENSION_STATUS.DISABLED) return;
     if (!location.hostname.endsWith('cafe.naver.com')) return;
+    if (!document.body) {
+        document.addEventListener('DOMContentLoaded', () => initContentScript(), { once: true });
+        return;
+    }
 
     stopContentScript();
 

@@ -22,13 +22,26 @@
     "content_scripts": [
         {
             "js": [
+                "scripts/page_observer.js"
+            ],
+            "matches": [
+                "*://cafe.naver.com/*",
+                "*://m.cafe.naver.com/*"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN",
+            "all_frames": true
+        },
+        {
+            "js": [
                 "scripts/content.js"
             ],
             "matches": [
                 "*://cafe.naver.com/*",
                 "*://m.cafe.naver.com/*",
                 "*://search.naver.com/search.naver?ssc=tab.cafe.all&query=*"
-            ]
+            ],
+            "run_at": "document_start"
         }
     ],
     "background": {
