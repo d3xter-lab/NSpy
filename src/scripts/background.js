@@ -20,20 +20,60 @@ const setIcon = (status) => {
     });
 };
 
+const SEARCH_CONCURRENCY = 2;
+const SEARCH_DELAY_MS = 180;
+let activeSearchCount = 0;
+let lastSearchStartTime = 0;
+const searchQueue = [];
+
+const scheduleSearchFetch = (task) => {
+    return new Promise((resolve, reject) => {
+        searchQueue.push({ task, resolve, reject });
+        drainSearchQueue();
+    });
+};
+
+const drainSearchQueue = () => {
+    if (activeSearchCount >= SEARCH_CONCURRENCY || searchQueue.length === 0) return;
+
+    const now = Date.now();
+    const waitMs = Math.max(0, lastSearchStartTime + SEARCH_DELAY_MS - now);
+    activeSearchCount++;
+    lastSearchStartTime = now + waitMs;
+
+    const { task, resolve, reject } = searchQueue.shift();
+    setTimeout(async () => {
+        try {
+            resolve(await task());
+        } catch (err) {
+            reject(err);
+        } finally {
+            activeSearchCount--;
+            drainSearchQueue();
+        }
+    }, waitMs);
+};
+
 const fetchUrl = async (url) => {
+    const isSearch = url.includes('search.naver.com');
     const headers = {
-        'Content-Type': url.includes('search.naver.com') ? 'text/html' : 'application/json'
+        'Accept': isSearch
+            ? 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            : 'application/json'
     };
 
-    try {
+    const doFetch = async () => {
         const response = await fetch(url, {
             method: 'GET',
             headers
         });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
         return await response.text();
-    } catch (error) {
-        throw error;
-    }
+    };
+
+    return isSearch ? scheduleSearchFetch(doFetch) : doFetch();
 };
 
 const updateAllTabs = (enabled) => {
