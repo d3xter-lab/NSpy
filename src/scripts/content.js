@@ -281,11 +281,14 @@ const waitForElement = (doc, selector, timeout = 5000) => {
     });
 };
 
-const parseArticleLinkInfo = (href) => {
+const parseArticleLinkInfo = (link) => {
     try {
-        const url = new URL(href);
+        if (!link?.href) return null;
+        const url = new URL(link.href);
         if (!url.hostname.endsWith('cafe.naver.com')) return null;
-        if (url.searchParams.has('art')) return null;
+
+        const currentArt = url.searchParams.get('art');
+        if (currentArt && currentArt === link.dataset.nspyArt) return null;
 
         const pathParts = url.pathname.split('/').filter(Boolean);
         let cafeId = url.searchParams.get('clubid');
@@ -310,18 +313,30 @@ const parseArticleLinkInfo = (href) => {
     }
 };
 
-const applyBypassUrl = (link, doc, newUrl, isMobile) => {
-    link.href = newUrl;
-    link.dataset.nspyUrl = newUrl;
+const applyBypassUrl = (link, doc, articleId, art, isMobile) => {
+    const currentInfo = parseArticleLinkInfo(link);
+    if (!currentInfo || currentInfo.articleId !== articleId) return;
+
+    currentInfo.url.searchParams.set('art', art);
+    link.href = currentInfo.url.toString();
+    link.dataset.nspyArt = art;
     link.removeAttribute('onclick');
 
     if (!link.dataset.nspyBound) {
         link.dataset.nspyBound = '1';
         link.addEventListener('click', (e) => {
             if (extensionStatus === EXTENSION_STATUS.DISABLED) return;
-            const targetUrl = link.dataset.nspyUrl;
-            if (!targetUrl) return;
+            if (!link.dataset.nspyArt) return;
 
+            let currentUrl;
+            try {
+                currentUrl = new URL(link.href);
+            } catch {
+                return;
+            }
+            if (currentUrl.searchParams.get('art') !== link.dataset.nspyArt) return;
+
+            const targetUrl = link.href;
             if (link.target === '_blank' || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) {
                 e.stopImmediatePropagation();
                 return;
@@ -336,7 +351,7 @@ const applyBypassUrl = (link, doc, newUrl, isMobile) => {
                 const isTopNavigation = doc === document ||
                     link.target === '_top' ||
                     link.target === '_parent' ||
-                    new URL(targetUrl).pathname.startsWith('/f-e/');
+                    currentUrl.pathname.startsWith('/f-e/');
                 const targetWin = isTopNavigation ? window : (doc.defaultView || window);
                 targetWin.location.href = targetUrl;
             }
@@ -378,7 +393,7 @@ const replaceSpyLinks = async (doc) => {
             const badgeEl = container.querySelector('.CdsBadgeText');
             if (badgeEl && /^(공지|필독)$/.test(badgeEl.textContent.trim())) continue;
 
-            const info = parseArticleLinkInfo(link.href);
+            const info = parseArticleLinkInfo(link);
             if (!info) continue;
 
             if (!articleGroups.has(info.articleId)) {
@@ -442,9 +457,8 @@ const replaceSpyLinks = async (doc) => {
                     ? cached.art
                     : await getArtToken(true, articleId, group.title, cafeName);
                 if (art) {
-                    for (const { link, url } of group.items) {
-                        url.searchParams.set('art', art);
-                        applyBypassUrl(link, doc, url.toString(), true);
+                    for (const { link } of group.items) {
+                        applyBypassUrl(link, doc, articleId, art, true);
                     }
                 }
             });
@@ -467,7 +481,7 @@ const replaceSpyLinks = async (doc) => {
         for (const link of articleLinks) {
             if (link.closest('tr.board-notice:not(.type_up)')) continue;
 
-            const info = parseArticleLinkInfo(link.href);
+            const info = parseArticleLinkInfo(link);
             if (!info) continue;
 
             if (!fallbackCafeId && info.cafeId && /^\d+$/.test(info.cafeId)) {
@@ -552,9 +566,8 @@ const replaceSpyLinks = async (doc) => {
                     ? cached.art
                     : await getArtToken(false, articleId, group.title, cafeName);
                 if (art) {
-                    for (const { link, url } of group.items) {
-                        url.searchParams.set('art', art);
-                        applyBypassUrl(link, doc, url.toString(), false);
+                    for (const { link } of group.items) {
+                        applyBypassUrl(link, doc, articleId, art, false);
                     }
                 }
             });

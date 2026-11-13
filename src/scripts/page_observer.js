@@ -24,6 +24,7 @@
             url.includes('/cafe-cafemain-api/') ||
             url.includes('/CafeMemberInfo.json') ||
             url.includes('/cafe-boardlist-api/') ||
+            url.includes('/search/v') ||
             url.includes('/ArticleListV');
     };
 
@@ -78,7 +79,7 @@
                 return;
             }
 
-            if (url.includes('/cafe-boardlist-api/') && url.includes('/articles')) {
+            if ((url.includes('/cafe-boardlist-api/') || url.includes('/search/v')) && url.includes('/articles')) {
                 const cafeMatch = url.match(/\/cafes\/(\d+)\//);
                 const fallbackCafeId = cafeMatch ? cafeMatch[1] : '';
                 const list = json?.result?.articleList;
@@ -87,10 +88,11 @@
                     for (const entry of list) {
                         const it = entry?.item || entry;
                         if (!it || it.articleId == null) continue;
+                        const rawReadLevel = it.readLevel ?? it.cafeMenuReadLevel;
                         articles.push({
                             articleId: String(it.articleId),
                             cafeId: String(it.cafeId || fallbackCafeId),
-                            readLevel: typeof it.readLevel === 'number' ? it.readLevel : null,
+                            readLevel: typeof rawReadLevel === 'number' ? rawReadLevel : null,
                             openArticle: Boolean(it.openArticle),
                             self: Boolean(it.self),
                             hasSummary: Boolean(it.summary && String(it.summary).trim().length > 0)
