@@ -18,7 +18,6 @@ const inFlightRequests = new Map();
 let globalLoggedIn = null;
 const cafeMemberMap = new Map();
 const articleMetaMap = new Map();
-const loggedReadableArticles = new Set();
 const pendingAuthWaiters = [];
 let mainObserver;
 let iframeObservers = [];
@@ -81,7 +80,7 @@ const waitForMemberAuthIfNeeded = (cafeId, timeoutMs = 600) => {
 };
 
 const isArticleAlreadyReadable = (cafeId, articleId, group) => {
-    for (const { link } of group.items) {
+    for (const link of group.links) {
         if (link.matches('a.txt, a.link_contents') && link.textContent.trim().length > 0) {
             return true;
         }
@@ -159,15 +158,6 @@ const fetchNewUrl = async (isMobile, articleId, title, cafeName) => {
                 return url.searchParams.get('art');
             }
         }
-
-        const escapedCafe = cafeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const rawMatch = response.data.match(
-            new RegExp(`https://cafe\\.naver\\.com/${escapedCafe}/${articleId}\\?[^"'\\s<>\\\\]*art=([^&"'\\s<>\\\\]+)`)
-        );
-        if (rawMatch) {
-            return decodeURIComponent(rawMatch[1]);
-        }
-
         return null;
     } catch (error) {
         return undefined;
@@ -368,6 +358,9 @@ const replaceSpyLinks = async (doc) => {
     }
 
     const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+    const articleGroups = new Map();
+    let cafeName = '';
+    let cafeId = null;
 
     if (isMobile) {
         const cafeIdentifier = resolveMobileCafeIdentifier();
@@ -376,18 +369,15 @@ const replaceSpyLinks = async (doc) => {
         const cafeInfo = await fetchCafeInfo(cafeIdentifier);
         if (!cafeInfo) return;
 
-        const { cafeName, cafeIndex } = cafeInfo;
+        cafeName = cafeInfo.cafeName;
+        cafeId = cafeInfo.cafeIndex;
         try {
             await waitForElement(doc, MOBILE_ARTICLE_LINK_SELECTOR);
         } catch (e) {
             return;
         }
 
-        await waitForMemberAuthIfNeeded(cafeIndex);
-
         const articleLinks = doc.querySelectorAll(MOBILE_ARTICLE_LINK_SELECTOR);
-        const articleGroups = new Map();
-
         for (const link of articleLinks) {
             const container = link.closest('.FeedItemWrap, .MultiLinkWrap') || link;
             const badgeEl = container.querySelector('.CdsBadgeText');
@@ -397,10 +387,10 @@ const replaceSpyLinks = async (doc) => {
             if (!info) continue;
 
             if (!articleGroups.has(info.articleId)) {
-                articleGroups.set(info.articleId, { title: '', items: [] });
+                articleGroups.set(info.articleId, { title: '', links: [] });
             }
             const group = articleGroups.get(info.articleId);
-            group.items.push({ link, url: info.url });
+            group.links.push(link);
 
             if (!group.title) {
                 const titleEl = container.querySelector('.tit');
@@ -409,74 +399,9 @@ const replaceSpyLinks = async (doc) => {
                 }
             }
         }
-
-        if (articleGroups.size === 0) return;
-
-        const allEntries = Array.from(articleGroups.entries());
-        const targetEntries = [];
-        let newlySkipped = 0;
-        for (const entry of allEntries) {
-            const [id, group] = entry;
-            if (isArticleAlreadyReadable(cafeIndex, id, group)) {
-                const key = `${cafeName}:${id}`;
-                if (!loggedReadableArticles.has(key)) {
-                    loggedReadableArticles.add(key);
-                    newlySkipped++;
-                }
-            } else {
-                targetEntries.push(entry);
-            }
-        }
-
-        const uncachedCount = targetEntries.filter(([id, group]) => {
-            if (!group.title) return false;
-            const cached = artCache.get(`${cafeName}:${id}`);
-            return !cached || Date.now() - cached.ts >= ART_CACHE_TTL_MS;
-        }).length;
-
-        if (newlySkipped > 0 || uncachedCount > 0) {
-            console.debug(`[NSpy] evaluated=${allEntries.length}, skippedReadable=${allEntries.length - targetEntries.length}, searchRequests=${uncachedCount}`);
-        }
-
-        if (targetEntries.length === 0) return;
-
-        const needsNetwork = uncachedCount > 0;
-
-        if (needsNetwork) {
-            activeTasks++;
-            updateIconStatus(EXTENSION_STATUS.RUNNING);
-        }
-
-        try {
-            const promises = targetEntries.map(async ([articleId, group]) => {
-                const cached = artCache.get(`${cafeName}:${articleId}`);
-                const hasFreshCache = cached && Date.now() - cached.ts < ART_CACHE_TTL_MS;
-                if (!hasFreshCache && !group.title) return;
-
-                const art = hasFreshCache
-                    ? cached.art
-                    : await getArtToken(true, articleId, group.title, cafeName);
-                if (art) {
-                    for (const { link } of group.items) {
-                        applyBypassUrl(link, doc, articleId, art, true);
-                    }
-                }
-            });
-            await Promise.all(promises);
-        } finally {
-            if (needsNetwork) {
-                activeTasks = Math.max(0, activeTasks - 1);
-                if (activeTasks === 0 && extensionStatus !== EXTENSION_STATUS.DISABLED) {
-                    updateIconStatus(EXTENSION_STATUS.ENABLED);
-                }
-            }
-        }
     } else {
         const articleLinks = doc.querySelectorAll(PC_ARTICLE_LINK_SELECTOR);
         if (articleLinks.length === 0) return;
-
-        const articleGroups = new Map();
-        let fallbackCafeId = null;
 
         for (const link of articleLinks) {
             if (link.closest('tr.board-notice:not(.type_up)')) continue;
@@ -484,100 +409,79 @@ const replaceSpyLinks = async (doc) => {
             const info = parseArticleLinkInfo(link);
             if (!info) continue;
 
-            if (!fallbackCafeId && info.cafeId && /^\d+$/.test(info.cafeId)) {
-                fallbackCafeId = info.cafeId;
+            if (!cafeId && info.cafeId && /^\d+$/.test(info.cafeId)) {
+                cafeId = info.cafeId;
             }
 
             if (!articleGroups.has(info.articleId)) {
-                articleGroups.set(info.articleId, { title: '', items: [] });
+                articleGroups.set(info.articleId, { title: '', links: [] });
             }
             const group = articleGroups.get(info.articleId);
-            group.items.push({ link, url: info.url });
+            group.links.push(link);
 
             if (!group.title) {
-                if (link.matches('a.article, a.tit')) {
-                    group.title = extractTitle(link);
-                } else {
-                    const row = link.closest('li, tr');
-                    const titleLink = row && row.querySelector('a.article, a.tit');
-                    if (titleLink) {
-                        group.title = extractTitle(titleLink);
-                    }
+                const titleLink = link.matches('a.article, a.tit')
+                    ? link
+                    : link.closest('li, tr')?.querySelector('a.article, a.tit');
+                if (titleLink) {
+                    group.title = extractTitle(titleLink);
                 }
             }
         }
 
         if (articleGroups.size === 0) return;
 
-        let cafeName = extractCafeName(doc);
-        if (!cafeName && doc !== document) {
-            cafeName = extractCafeName(document);
-        }
-        if (!cafeName && fallbackCafeId) {
-            const cafeInfo = await fetchCafeInfo({ cafeId: fallbackCafeId });
+        cafeName = extractCafeName(doc) || (doc !== document ? extractCafeName(document) : '');
+        if (!cafeName && cafeId) {
+            const cafeInfo = await fetchCafeInfo({ cafeId });
             cafeName = cafeInfo ? cafeInfo.cafeName : '';
         }
-        if (!cafeName) return;
+    }
 
-        await waitForMemberAuthIfNeeded(fallbackCafeId);
+    if (articleGroups.size === 0 || !cafeName) return;
 
-        const allEntries = Array.from(articleGroups.entries());
-        const targetEntries = [];
-        let newlySkipped = 0;
-        for (const entry of allEntries) {
-            const [id, group] = entry;
-            if (isArticleAlreadyReadable(fallbackCafeId, id, group)) {
-                const key = `${cafeName}:${id}`;
-                if (!loggedReadableArticles.has(key)) {
-                    loggedReadableArticles.add(key);
-                    newlySkipped++;
+    await waitForMemberAuthIfNeeded(cafeId);
+
+    const allEntries = Array.from(articleGroups.entries());
+    const targetEntries = allEntries.filter(([id, group]) => !isArticleAlreadyReadable(cafeId, id, group));
+
+    const uncachedCount = targetEntries.filter(([id, group]) => {
+        if (!group.title) return false;
+        const cached = artCache.get(`${cafeName}:${id}`);
+        return !cached || Date.now() - cached.ts >= ART_CACHE_TTL_MS;
+    }).length;
+
+    console.debug(`[NSpy] evaluated=${allEntries.length}, skippedReadable=${allEntries.length - targetEntries.length}, searchRequests=${uncachedCount}`);
+
+    if (targetEntries.length === 0) return;
+
+    const needsNetwork = uncachedCount > 0;
+    if (needsNetwork) {
+        activeTasks++;
+        updateIconStatus(EXTENSION_STATUS.RUNNING);
+    }
+
+    try {
+        const promises = targetEntries.map(async ([articleId, group]) => {
+            const cached = artCache.get(`${cafeName}:${articleId}`);
+            const hasFreshCache = cached && Date.now() - cached.ts < ART_CACHE_TTL_MS;
+            if (!hasFreshCache && !group.title) return;
+
+            const art = hasFreshCache
+                ? cached.art
+                : await getArtToken(isMobile, articleId, group.title, cafeName);
+            if (art) {
+                for (const link of group.links) {
+                    applyBypassUrl(link, doc, articleId, art, isMobile);
                 }
-            } else {
-                targetEntries.push(entry);
             }
-        }
-
-        const uncachedCount = targetEntries.filter(([id, group]) => {
-            if (!group.title) return false;
-            const cached = artCache.get(`${cafeName}:${id}`);
-            return !cached || Date.now() - cached.ts >= ART_CACHE_TTL_MS;
-        }).length;
-
-        if (newlySkipped > 0 || uncachedCount > 0) {
-            console.debug(`[NSpy] evaluated=${allEntries.length}, skippedReadable=${allEntries.length - targetEntries.length}, searchRequests=${uncachedCount}`);
-        }
-
-        if (targetEntries.length === 0) return;
-
-        const needsNetwork = uncachedCount > 0;
-
+        });
+        await Promise.all(promises);
+    } finally {
         if (needsNetwork) {
-            activeTasks++;
-            updateIconStatus(EXTENSION_STATUS.RUNNING);
-        }
-
-        try {
-            const promises = targetEntries.map(async ([articleId, group]) => {
-                const cached = artCache.get(`${cafeName}:${articleId}`);
-                const hasFreshCache = cached && Date.now() - cached.ts < ART_CACHE_TTL_MS;
-                if (!hasFreshCache && !group.title) return;
-
-                const art = hasFreshCache
-                    ? cached.art
-                    : await getArtToken(false, articleId, group.title, cafeName);
-                if (art) {
-                    for (const { link } of group.items) {
-                        applyBypassUrl(link, doc, articleId, art, false);
-                    }
-                }
-            });
-            await Promise.all(promises);
-        } finally {
-            if (needsNetwork) {
-                activeTasks = Math.max(0, activeTasks - 1);
-                if (activeTasks === 0 && extensionStatus !== EXTENSION_STATUS.DISABLED) {
-                    updateIconStatus(EXTENSION_STATUS.ENABLED);
-                }
+            activeTasks = Math.max(0, activeTasks - 1);
+            if (activeTasks === 0 && extensionStatus !== EXTENSION_STATUS.DISABLED) {
+                updateIconStatus(EXTENSION_STATUS.ENABLED);
             }
         }
     }

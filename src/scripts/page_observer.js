@@ -28,6 +28,27 @@
             url.includes('/ArticleListV');
     };
 
+    const emitArticles = (list, fallbackCafeId) => {
+        if (!Array.isArray(list)) return;
+        const articles = [];
+        for (const entry of list) {
+            const it = entry?.item || entry;
+            if (!it || it.articleId == null) continue;
+            const rawReadLevel = it.readLevel ?? it.cafeMenuReadLevel;
+            articles.push({
+                articleId: String(it.articleId),
+                cafeId: String(it.cafeId || fallbackCafeId),
+                readLevel: typeof rawReadLevel === 'number' ? rawReadLevel : null,
+                openArticle: Boolean(it.openArticle),
+                self: Boolean(it.self),
+                hasSummary: Boolean(it.summary && String(it.summary).trim().length > 0)
+            });
+        }
+        if (articles.length > 0) {
+            emit({ type: 'articles', articles });
+        }
+    };
+
     const inspectPayload = (url, status, json) => {
         try {
             if (url.includes('/cafe-home/v1/member/identifier')) {
@@ -81,27 +102,7 @@
 
             if ((url.includes('/cafe-boardlist-api/') || url.includes('/search/v')) && url.includes('/articles')) {
                 const cafeMatch = url.match(/\/cafes\/(\d+)\//);
-                const fallbackCafeId = cafeMatch ? cafeMatch[1] : '';
-                const list = json?.result?.articleList;
-                if (Array.isArray(list)) {
-                    const articles = [];
-                    for (const entry of list) {
-                        const it = entry?.item || entry;
-                        if (!it || it.articleId == null) continue;
-                        const rawReadLevel = it.readLevel ?? it.cafeMenuReadLevel;
-                        articles.push({
-                            articleId: String(it.articleId),
-                            cafeId: String(it.cafeId || fallbackCafeId),
-                            readLevel: typeof rawReadLevel === 'number' ? rawReadLevel : null,
-                            openArticle: Boolean(it.openArticle),
-                            self: Boolean(it.self),
-                            hasSummary: Boolean(it.summary && String(it.summary).trim().length > 0)
-                        });
-                    }
-                    if (articles.length > 0) {
-                        emit({ type: 'articles', articles });
-                    }
-                }
+                emitArticles(json?.result?.articleList, cafeMatch ? cafeMatch[1] : '');
                 return;
             }
 
@@ -113,24 +114,7 @@
                 } else if (fallbackCafeId && res?.cafeMember === false) {
                     emit({ type: 'member', cafeId: fallbackCafeId, isMember: false, level: 0, isStaff: false });
                 }
-                const list = res?.articleList;
-                if (Array.isArray(list)) {
-                    const articles = [];
-                    for (const it of list) {
-                        if (!it || it.articleId == null) continue;
-                        articles.push({
-                            articleId: String(it.articleId),
-                            cafeId: String(it.cafeId || fallbackCafeId),
-                            readLevel: typeof it.readLevel === 'number' ? it.readLevel : null,
-                            openArticle: Boolean(it.openArticle),
-                            self: Boolean(it.self),
-                            hasSummary: Boolean(it.summary && String(it.summary).trim().length > 0)
-                        });
-                    }
-                    if (articles.length > 0) {
-                        emit({ type: 'articles', articles });
-                    }
-                }
+                emitArticles(res?.articleList, fallbackCafeId);
             }
         } catch {
             // Never disrupt page execution
